@@ -11,6 +11,9 @@ function SettingsPage() {
     defaultBillingCycle: 'monthly',
     notifyDaysBefore: 7,
   });
+  const [meta, setMeta] = useState({
+    lastNotificationSentAt: null,
+  });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -43,6 +46,10 @@ function SettingsPage() {
         };
 
         setForm(normalized);
+        setMeta({
+          lastNotificationSentAt: body.lastNotificationSentAt || null,
+        });
+
         localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(normalized));
       } catch (err) {
         console.error(err);
@@ -99,6 +106,9 @@ function SettingsPage() {
       };
 
       setForm(normalized);
+      setMeta({
+        lastNotificationSentAt: body.lastNotificationSentAt || meta.lastNotificationSentAt,
+      });
       localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(normalized));
       setSaved(true);
     } catch (err) {
@@ -200,6 +210,25 @@ function SettingsPage() {
                 ✔ Beállítások elmentve
               </span>
             )}
+
+
+            <div className="mt-4 rounded-2xl border border-slate-700/70 bg-slate-950/70 px-3 py-2 text-xs text-slate-300">
+              <div className="font-semibold text-slate-100 mb-1">
+                Értesítések állapota
+              </div>
+              <div>
+                Értesítési ablak: <strong>{form.notifyDaysBefore} nap</strong>
+              </div>
+              <div className="mt-1">
+                Utolsó értesítés:{' '}
+                {meta.lastNotificationSentAt
+                  ? new Date(meta.lastNotificationSentAt).toLocaleString('hu-HU')
+                  : 'Még nem küldtünk értesítést.'}
+              </div>
+              <div className="mt-1 text-[11px] text-slate-400">
+                A napi automatikus email és a „Teszt email küldése” funkció is frissíti ezt az értéket.
+              </div>
+            </div>
           </div>
         </form>
       </div>

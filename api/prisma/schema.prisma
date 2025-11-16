@@ -16,6 +16,7 @@ model User {
   defaultCurrency      String? // pl. "HUF", "EUR"
   defaultBillingCycle  String? // "monthly" | "yearly"
   notifyDaysBefore     Int?    // hány nappal előtte szóljon (pl. 7)
+  lastNotificationSentAt DateTime?
 }
 
 model Subscription {

@@ -4,6 +4,8 @@ const cors = require("cors");
 const { PrismaClient } = require("@prisma/client");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
+const nodemailer = require('nodemailer');
+const cron = require('node-cron');
 
 const app = express();
 const prisma = new PrismaClient();
@@ -381,6 +383,7 @@ app.get('/api/settings', authMiddleware, async (req, res) => {
         defaultCurrency: true,
         defaultBillingCycle: true,
         notifyDaysBefore: true,
+        lastNotificationSentAt: true,
       },
     });
 
@@ -420,6 +423,7 @@ app.put('/api/settings', authMiddleware, async (req, res) => {
         defaultCurrency: true,
         defaultBillingCycle: true,
         notifyDaysBefore: true,
+        lastNotificationSentAt: true, 
       },
     });
 
@@ -569,6 +573,218 @@ app.post('/api/subscriptions/:id/bump-next-charge', authMiddleware, async (req, 
       .json({ error: 'Nem sikerült frissíteni a következő terhelés dátumát.' });
   }
 });
+
+
+
+// email küldő
+const mailTransport = nodemailer.createTransport({
+  host: process.env.MAIL_HOST,
+  port: Number(process.env.MAIL_PORT || 587),
+  secure: false,
+  auth: {
+    user: process.env.MAIL_USER,
+    pass: process.env.MAIL_PASS,
+  },
+});
+
+app.post('/api/notifications/send-test', authMiddleware, async (req, res) => {
+  try {
+    const user = await prisma.user.findUnique({
+      where: { id: req.userId },
+      select: {
+        email: true,
+        notifyDaysBefore: true,
+      },
+    });
+
+    if (!user) {
+      return res.status(404).json({ error: 'Felhasználó nem található.' });
+    }
+
+    const notifyDays =
+      user.notifyDaysBefore !== null &&
+      user.notifyDaysBefore !== undefined &&
+      !Number.isNaN(Number(user.notifyDaysBefore))
+        ? Number(user.notifyDaysBefore)
+        : 7;
+
+    const now = new Date();
+    const today = new Date(
+      now.getFullYear(),
+      now.getMonth(),
+      now.getDate()
+    );
+    const endDate = new Date(today);
+    endDate.setDate(endDate.getDate() + notifyDays);
+
+    const subs = await prisma.subscription.findMany({
+      where: {
+        userId: req.userId,
+        nextChargeDate: {
+          gte: today,
+          lte: endDate,
+        },
+      },
+      orderBy: { nextChargeDate: 'asc' },
+    });
+
+    if (!subs.length) {
+      return res.status(400).json({
+        error:
+          'Jelenleg nincs olyan előfizetés, ami értesítési időablakon belül lenne.',
+      });
+    }
+
+    const lines = subs.map((s) => {
+      const d = s.nextChargeDate
+        ? new Date(s.nextChargeDate).toLocaleDateString('hu-HU')
+        : '-';
+      return `• ${s.name} – ${s.price.toLocaleString('hu-HU')} ${
+        s.currency
+      } (${s.billingCycle === 'monthly' ? 'havi' : 'éves'}) – ${d}`;
+    });
+
+    const total = subs.reduce((sum, s) => sum + s.price, 0);
+
+    const subject = `Monity – közelgő terhelések (${subs.length} db)`;
+    const textBody =
+      `Szia!\n\n` +
+      `A Monity szerint a következő ${notifyDays} napban az alábbi előfizetések terhelődnek:\n\n` +
+      lines.join('\n') +
+      `\n\nÖsszes várható terhelés: ${total.toLocaleString('hu-HU')} Ft\n\n` +
+      `Ha módosítani szeretnéd az értesítési időablakot, lépj be a Beállítások menübe.\n\n` +
+      `Üdv,\n` +
+      `Monity`;
+
+    await mailTransport.sendMail({
+      from: process.env.MAIL_FROM || process.env.MAIL_USER,
+      to: user.email,
+      subject,
+      text: textBody,
+    });
+
+    //utolsó értesítés időpontja
+    await prisma.user.update({
+      where: { id: req.userId },
+      data: {
+        lastNotificationSentAt: new Date(),
+      },
+    });
+
+    res.json({
+      success: true,
+      message: `Teszt email elküldve a(z) ${user.email} címre.`,
+    });
+  } catch (err) {
+    console.error('Send test notifications email error', err);
+    res.status(500).json({
+      error:
+        'Nem sikerült elküldeni a teszt emailt. Ellenőrizd az email beállításokat a szerveren.',
+    });
+  }
+});
+
+
+// ───────────────────────────────────────────────
+// Napi automatikus értesítés (cron)
+// ───────────────────────────────────────────────
+
+cron.schedule('0 8 * * *', async () => {
+  // ez 08:00-kor fut minden nap (szerveridő szerint)
+  console.log('[CRON] Napi értesítés futtatása...');
+
+  try {
+    const users = await prisma.user.findMany({
+      select: {
+        id: true,
+        email: true,
+        notifyDaysBefore: true,
+      },
+    });
+
+    for (const user of users) {
+      try {
+        const notifyDays =
+          user.notifyDaysBefore !== null &&
+          user.notifyDaysBefore !== undefined &&
+          !Number.isNaN(Number(user.notifyDaysBefore))
+            ? Number(user.notifyDaysBefore)
+            : 7;
+
+        const now = new Date();
+        const today = new Date(
+          now.getFullYear(),
+          now.getMonth(),
+          now.getDate()
+        );
+        const endDate = new Date(today);
+        endDate.setDate(endDate.getDate() + notifyDays);
+
+        const subs = await prisma.subscription.findMany({
+          where: {
+            userId: user.id,
+            nextChargeDate: {
+              gte: today,
+              lte: endDate,
+            },
+          },
+          orderBy: { nextChargeDate: 'asc' },
+        });
+
+        if (!subs.length) {
+          continue; // ennél a usernél nincs mit küldeni
+        }
+
+        const lines = subs.map((s) => {
+          const d = s.nextChargeDate
+            ? new Date(s.nextChargeDate).toLocaleDateString('hu-HU')
+            : '-';
+          return `• ${s.name} – ${s.price.toLocaleString('hu-HU')} ${
+            s.currency
+          } (${s.billingCycle === 'monthly' ? 'havi' : 'éves'}) – ${d}`;
+        });
+
+        const total = subs.reduce((sum, s) => sum + s.price, 0);
+
+        const subject = `Monity – közelgő terhelések (${subs.length} db)`;
+        const textBody =
+          `Szia!\n\n` +
+          `A Monity szerint a következő ${notifyDays} napban az alábbi előfizetések terhelődnek:\n\n` +
+          lines.join('\n') +
+          `\n\nÖsszes várható terhelés: ${total.toLocaleString('hu-HU')} Ft\n\n` +
+          `Ha módosítani szeretnéd az értesítési időablakot, lépj be a Beállítások menübe.\n\n` +
+          `Üdv,\n` +
+          `Monity`;
+
+        await mailTransport.sendMail({
+          from: process.env.MAIL_FROM || process.env.MAIL_USER,
+          to: user.email,
+          subject,
+          text: textBody,
+        });
+
+        await prisma.user.update({
+          where: { id: user.id },
+          data: {
+            lastNotificationSentAt: new Date(),
+          },
+        });
+
+        console.log(
+          `[CRON] Értesítés elküldve: ${user.email} (${subs.length} tétel)`
+        );
+      } catch (userErr) {
+        console.error(
+          `[CRON] Hiba a(z) ${user.email} értesítése közben:`,
+          userErr
+        );
+      }
+    }
+  } catch (err) {
+    console.error('[CRON] Globális hiba a napi értesítésben:', err);
+  }
+});
+
 
 
 
