@@ -10,6 +10,7 @@ datasource db {
 model User {
   id            Int            @id @default(autoincrement())
   email         String         @unique
+  username        String         @unique
   passwordHash  String
   createdAt     DateTime       @default(now())
   subscriptions Subscription[]
@@ -17,6 +18,7 @@ model User {
   defaultBillingCycle  String? // "monthly" | "yearly"
   notifyDaysBefore     Int?    // hány nappal előtte szóljon (pl. 7)
   lastNotificationSentAt DateTime?
+  pushToken      String?
 }
 
 model Subscription {

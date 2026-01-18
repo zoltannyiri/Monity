@@ -3,3 +3,5 @@ node_modules
 .env
 
 /generated/prisma
+monity-*.json
+monity-4b9a5-27271e990fb1.json

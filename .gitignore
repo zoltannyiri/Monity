@@ -21,3 +21,8 @@
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+
+
+.monity-4b9a5-27271e990fb1.json
+api/monity-*.json
+api/monity-4b9a5-27271e990fb1.json
