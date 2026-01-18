@@ -58,6 +58,35 @@ async function getLiveRates() {
   }
 }
 
+// 🔥 Firebase Admin inicializálása (Render-barát módon)
+let serviceAccount;
+
+if (process.env.FIREBASE_CONFIG_JSON) {
+  // 1. Ha a Render-en vagyunk, a környezeti változóból vesszük a JSON-t
+  try {
+    serviceAccount = JSON.parse(process.env.FIREBASE_CONFIG_JSON);
+    console.log("✅ Firebase Config betöltve környezeti változóból.");
+  } catch (err) {
+    console.error("❌ Hiba a FIREBASE_CONFIG_JSON parszolása közben:", err);
+  }
+} else {
+  // 2. Lokálisan (a saját gépeden) továbbra is a fájlt keresi
+  const serviceAccountPath = process.env.FIREBASE_CREDENTIALS && path.resolve(__dirname, process.env.FIREBASE_CREDENTIALS);
+  
+  if (serviceAccountPath && fs.existsSync(serviceAccountPath)) {
+    serviceAccount = require(serviceAccountPath);
+    console.log("✅ Firebase Admin inicializálva fájlból.");
+  }
+}
+
+if (serviceAccount) {
+  admin.initializeApp({
+    credential: admin.credential.cert(serviceAccount),
+  });
+} else {
+  console.warn("⚠️ Firebase service account nem található, a push értesítések nem fognak működni!");
+}
+
 // REGISZTRÁCIÓ
 app.post('/api/auth/register', async (req, res) => {
   try {
@@ -167,22 +196,6 @@ async function sendPushToToken(pushToken, title, body) {
 }
 
 
-
-
-
-// 🔥 Service account JSON betöltése
-const serviceAccountPath =
-  process.env.FIREBASE_CREDENTIALS &&
-  path.resolve(__dirname, process.env.FIREBASE_CREDENTIALS);
-
-if (serviceAccountPath && fs.existsSync(serviceAccountPath)) {
-  admin.initializeApp({
-    credential: admin.credential.cert(require(serviceAccountPath)),
-  });
-  console.log("✅ Firebase Admin initialized");
-} else {
-  console.warn("⚠️ Firebase service account file not found, push értesítés nem fog működni.");
-}
 
 
 
